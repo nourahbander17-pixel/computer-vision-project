@@ -1,1 +1,10 @@
-
+{
+  "rules_version": "grading-rules-v1",
+  "area_reject_threshold_pct": 8.0,
+  "area_substandard_threshold_pct": 3.0,
+  "reject_on_classes": ["mould", "foreign_object"],
+  "substandard_on_classes": ["insect_damage"],
+  "detector_conf_per_class": {"mould": 0.20, "skin_split": 0.30, "insect_damage": 0.25, "sugaring": 0.30, "foreign_object": 0.20},
+  "detector_nms_iou": 0.45,
+  "latency_budget_ms_end_to_end": 380
+}
