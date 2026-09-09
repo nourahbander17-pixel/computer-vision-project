@@ -2,7 +2,7 @@
 
 **Computer Vision Systems Development Project**
 
- Name:** Nourahbander17
+ Name:** nourahbander17
 
 **Computer Vision Systems Development – [SDAIA Academy](https://github.com/SDAIAAcademy/)**
 
