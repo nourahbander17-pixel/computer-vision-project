@@ -1,11 +1,9 @@
 """Generate the synthetic 'dates-qc mini' bundle used by Labs 1-8.
-
 The official SDAIA bundle (12,000 real conveyor frames) was not supplied with the course files,
 so this script draws a procedural stand-in that reproduces every mechanic the labs need:
 four grades, five boxable defect classes, polygon masks, session-based splits, an evening
 session (s09) that is systematically harder, planted label errors, three corrupt annotation
 rows, a double-annotated QA sample, and an unlabelled pool for active learning.
-
 Run:  python make_dates_qc.py            (about 1-2 minutes, fixed seed)
 Output: data/dates-qc/  (see README_DATA.md written alongside)
 """
@@ -13,19 +11,16 @@ import json, hashlib, csv
 from pathlib import Path
 import numpy as np
 import cv2
-
 OUT = Path(__file__).parent / "data" / "dates-qc"
 IMG = OUT / "images"
 POOL = OUT / "unlabelled_pool"
 KEY = OUT / "answer_key"
 for d in (IMG, POOL, KEY):
     d.mkdir(parents=True, exist_ok=True)
-
 rng = np.random.default_rng(212)
 S = 256                                   # frame size
 GRADES = ["premium", "standard", "substandard", "reject"]      # frozen order
 DEFECTS = ["mould", "skin_split", "insect_damage", "sugaring", "foreign_object"]  # frozen order
-
 # session -> (n_frames, brightness, blue tint, blur, split)
 SESSIONS = {
     "s01": (100, 1.00, 0, 0, "train"), "s02": (100, 1.05, 0, 0, "train"), "s03": (100, 0.95, 0, 1, "train"),
@@ -36,8 +31,6 @@ SESSIONS = {
     "s12": (100, 1.00, 0, 0, "test"),
 }
 POOL_SESSIONS = {"s13": (150, 0.55, 25, 1), "s14": (150, 1.0, 0, 0)}   # unlabelled: half evening frames
-
-
 def belt_background():
     bg = np.full((S, S, 3), (66, 64, 60), np.uint8)             # RGB
     noise = rng.normal(0, 6, (S, S, 1)).astype(np.int16)
@@ -45,8 +38,6 @@ def belt_background():
     for y in range(0, S, 32):                                     # belt seams
         cv2.line(bg, (0, y + int(rng.integers(0, 8))), (S, y + int(rng.integers(0, 8))), (52, 50, 48), 1)
     return bg
-
-
 def draw_fruit(img, mask_layer):
     cx, cy = int(rng.integers(45, S - 45)), int(rng.integers(45, S - 45))
     a, b = int(rng.integers(34, 52)), int(rng.integers(22, 34))
@@ -66,8 +57,6 @@ def draw_fruit(img, mask_layer):
     sel = m > 0
     img[sel] = fruit[sel]
     return {"mask": sel, "center": (cx, cy), "axes": (a, b), "angle": ang}
-
-
 def draw_defect(img, fruit, kind):
     """Draw one defect instance on a fruit; return its boolean mask."""
     cx, cy = fruit["center"]; a, b = fruit["axes"]
@@ -111,8 +100,6 @@ def draw_defect(img, fruit, kind):
     alpha = 0.55 if kind == "sugaring" else 0.9
     img[sel] = (alpha * layer[sel] + (1 - alpha) * img[sel]).astype(np.uint8)
     return sel
-
-
 def apply_session(img, bright, tint, blur):
     out = img.astype(np.float32) * bright
     out[..., 2] += tint; out[..., 0] -= tint * 0.4
@@ -121,8 +108,6 @@ def apply_session(img, bright, tint, blur):
         out = cv2.GaussianBlur(out, (3, 3), 0)
     out = np.clip(out.astype(np.int16) + rng.normal(0, 3, out.shape).astype(np.int16), 0, 255).astype(np.uint8)
     return out
-
-
 def mask_to_polygon(mask):
     cnts, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not cnts:
@@ -130,13 +115,9 @@ def mask_to_polygon(mask):
     c = max(cnts, key=cv2.contourArea)
     c = cv2.approxPolyDP(c, 0.8, True).reshape(-1, 2)
     return c if len(c) >= 3 else None
-
-
 def bbox(mask):
     ys, xs = np.where(mask)
     return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
-
-
 def grade_from(defect_pct, kinds):
     if "mould" in kinds or "foreign_object" in kinds or defect_pct > 8.0:
         return "reject"
@@ -145,8 +126,6 @@ def grade_from(defect_pct, kinds):
     if defect_pct > 0.0:
         return "standard"
     return "premium"
-
-
 def make_frame(bright, tint, blur):
     img = belt_background()
     fruits = []
@@ -176,8 +155,6 @@ def make_frame(bright, tint, blur):
     grade = grade_from(pct, kinds)
     img = apply_session(img, bright, tint, blur)
     return img, fruits, instances, pct, grade
-
-
 def write_bundle():
     manifest, boxes_raw, seg = [], [], {}
     truth_pct = {}
@@ -212,7 +189,6 @@ def write_bundle():
             cv2.imwrite(str(POOL / name), cv2.cvtColor(img, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 92])
             pool_truth[name] = {"session_id": sid, "grade": grade,
                                 "boxes": [{"class_name": c, **dict(zip(["x1", "y1", "x2", "y2"], bbox(m)))} for c, m in inst]}
-
     # ---- plant label noise in v1 grade labels (train split only) ----
     errors = []
     train_rows = [r for r in manifest if r["split"] == "train"]
@@ -242,7 +218,6 @@ def write_bundle():
         elif rng.random() < 0.04:
             b = str(rng.choice(GRADES))
         qa.append({"file": r["file"], "annotator_A": a, "annotator_B": b})
-
     # ---- write ----
     with open(OUT / "manifest_v1.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["file", "session_id", "split", "grade", "spec_version"]); w.writeheader(); w.writerows(manifest)
@@ -261,8 +236,6 @@ def write_bundle():
     from collections import Counter
     print("grade distribution (noisy v1):", Counter(r["grade"] for r in manifest))
     print("defect instances:", Counter(b["class_name"] for b in boxes_raw))
-
-
 SPEC = """# dates-qc annotation spec, version 1 (annotation-spec-v1)
 
 ## 1. Grade taxonomy (frozen order)
@@ -270,25 +243,18 @@ premium, standard, substandard, reject
 
 Rules: reject if any mould or foreign object is present, or if total defect area exceeds 8 percent of the visible fruit surface (single view).
 substandard if defect area is between 3 and 8 percent, or any insect damage is present. standard if any smaller defect is present. premium if no defect.
-
 ## 2. Defect classes (frozen order)
 mould, skin_split, insect_damage, sugaring, foreign_object. Every class must have a locatable extent (boxable).
-
 ## 3. Boxes
 Tight axis-aligned box around the visible extent of the defect, in pixel coordinates (x1, y1, x2, y2), origin top-left.
-
 ## 4. Polygons and masks
 Annotate the outer boundary only; holes are ignored. One polygon per instance. Fruit polygons cover the visible fruit surface.
-
 ## 5. Known gaps in v1 (to be fixed in v2)
 No boundary rule for where sugaring ends and healthy skin begins. No rule for co-occurring sugaring and mould. No reference gallery.
-
 ## 6. QA
 10 percent of frames double-annotated. Class kappa below 0.75 stops labelling until the spec is fixed.
 """
-
 DATA_README = """# dates-qc mini bundle (synthetic stand-in for the course dataset)
-
 images/                  1,200 frames, 256x256 RGB JPEG, 12 sessions (s01-s12), 100 each
 manifest_v1.csv          file, session_id, split (by session: train s01-s08, val s10-s11, test s09+s12), grade (v1 labels, contain noise), spec_version
 annotations_boxes_raw.csv  raw defect boxes in PIXELS from the annotation vendor; contains 3 corrupt rows (Lab 3 finds them)
@@ -297,11 +263,9 @@ qa_double_annotation.csv 200 train frames graded by two annotators (Lab 5 agreem
 unlabelled_pool/         300 unlabelled frames (s13 evening, s14 daytime) for Lab 5 active learning
 ANNOTATION_SPEC.md       the v1 spec, with known gaps
 answer_key/              INSTRUCTOR ONLY: planted label errors, true defect-area percentages, pool ground truth
-
 Session s09 is an evening session (dark, blue-tinted, slight blur) and sits in the test split only.
 It is the planted weak slice that Lab 6 must discover.
 """
-
 if __name__ == "__main__":
     import sys, shutil
     write_bundle()
