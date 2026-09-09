@@ -2,7 +2,7 @@
 
 **Computer Vision Systems Development Project**
 
- Name:** Anas Ibrahim Al-Mutairi
+ Name:** Nourah alshammri
 
 **Computer Vision Systems Development – [SDAIA Academy](https://github.com/SDAIAAcademy/)**
 
