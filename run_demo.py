@@ -8,19 +8,16 @@ import numpy as np, pandas as pd, cv2, torch
 from tamr_vision import *
 import onnxruntime as ort
 from ultralytics import YOLO
-
 N_FRAMES = int(os.environ.get("N_FRAMES", "40"))        # frames per test session in the demo run
 ROOT, CK, DIST, RUNS = "data/dates-qc", "checkpoints", "dist", "runs"
 os.makedirs(DIST, exist_ok=True); os.makedirs(RUNS, exist_ok=True)
 def step(n, msg): print(f"\n==== Step {n}. {msg}", flush=True)
-
 # ------------------------------------------------------------------ 1. data
 step(1, "Dataset")
 if not os.path.exists(f"{ROOT}/manifest_v1.csv"):
     print("generating data/dates-qc (about 1 to 2 minutes) ..."); subprocess.run([sys.executable, "make_dates_qc.py", "--participant"], check=True)
 man = pd.read_csv(f"{ROOT}/manifest_v1.csv"); print("frames:", len(man), "| splits:", man.split.value_counts().to_dict())
 rules = json.load(open("config/grading_rules.json")); print("rules:", rules["rules_version"])
-
 # ------------------------------------------------------------------ 2. classifier -> ONNX with parity
 step(2, "Export the grade classifier to ONNX and prove parity")
 clf, ckpt = load_checkpoint(f"{CK}/grade_resnet18.pt")
@@ -31,7 +28,6 @@ size_fp32 = os.path.getsize(f"{DIST}/grade_resnet18.onnx") / 1e6
 size_int8 = quantize_dynamic_int8(f"{DIST}/grade_resnet18.onnx", f"{DIST}/grade_resnet18_int8.onnx")
 print(f"classifier ONNX: FP32 {size_fp32:.1f} MB, INT8 {size_int8:.1f} MB")
 cls_sess = ort.InferenceSession(f"{DIST}/grade_resnet18_int8.onnx", providers=["CPUExecutionProvider"])
-
 # ------------------------------------------------------------------ 3. detector -> ONNX and a latency benchmark
 step(3, "Export the defect detector to ONNX and benchmark it")
 import shutil
@@ -46,16 +42,13 @@ for i in range(60):
     t0 = time.perf_counter(); x = det_preprocess(frames[i % 20], 256); raw = det_sess.run(None, {det_in: x}); decode_and_nms(raw, 0.25, rules["detector_nms_iou"]); lat.append((time.perf_counter() - t0) * 1000)
 bench = {"detector_onnx_MB": round(os.path.getsize(f"{DIST}/defect_y11n_256.onnx") / 1e6, 1), "p50_ms": round(float(np.percentile(lat, 50)), 1), "p99_ms": round(float(np.percentile(lat, 99)), 1)}
 print("detector ONNX benchmark:", bench)
-
 # ------------------------------------------------------------------ 4. edge loop
 step(4, f"Run the edge loop on {N_FRAMES} frames from each test session")
 det, seg = YOLO(f"{CK}/defect_y11n.pt"), YOLO(f"{CK}/defect_y11n_seg.pt")
 VERSIONS = {"classifier": f"{DIST}/grade_resnet18_int8.onnx", "detector": f"{CK}/defect_y11n.pt", "segmenter": f"{CK}/defect_y11n_seg.pt",
             "dataset": "dates-qc-v1", "rules": rules["rules_version"], "contract": CONTRACT_VERSION}
-
 def classify(bgr):
     logits = cls_sess.run(None, {"image": preprocess_cv2(bgr)})[0][0]; e = np.exp(logits - logits.max()); return e / e.sum()
-
 def grade_frame(det_result, seg_result, cls_probs, rules):
     thr = rules["detector_conf_per_class"]
     dets = [(det_result.names[int(c)], float(s)) for c, s in zip(det_result.boxes.cls, det_result.boxes.conf)]
@@ -67,7 +60,6 @@ def grade_frame(det_result, seg_result, cls_probs, rules):
     elif present or area > 0: g, why = "standard", "minor defect present"
     else: g, why = GRADES[int(np.argmax(cls_probs))], "classifier fallback (no defect detected)"
     return g, why, dets, area
-
 footage = pd.concat([test[test.session_id == s].head(N_FRAMES) for s in sorted(test.session_id.unique())])
 truth = man.set_index("file").grade
 logs, thumbs = [], {}
@@ -93,7 +85,6 @@ L = pd.DataFrame([{"frame": l["frame_id"], "session": l["session"], "decision": 
 L["correct"] = L.decision == L.truth
 print(L.head(6).to_string(index=False)); print("decisions:", L.decision.value_counts().to_dict())
 print(f"accuracy {L.correct.mean():.3f} | p50 {L.total_ms.median():.0f} ms | p99 {L.total_ms.quantile(.99):.0f} ms | budget {rules['latency_budget_ms_end_to_end']} ms")
-
 # ------------------------------------------------------------------ 5. report
 step(5, "Write report.html")
 per_s = L.groupby("session").agg(n=("frame", "size"), accuracy=("correct", "mean"), p50_ms=("total_ms", "median")).round(3).reset_index()
