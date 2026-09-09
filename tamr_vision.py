@@ -1,5 +1,4 @@
 """tamr_vision.py - single-module version of the course's `tamr_vision/` package.
-
 Everything the eight labs share lives here so participants can read it in one file:
   data      : preprocessing contract (train_tf / eval_tf), DatesQCDataset, stats, throughput
   models    : build_model, freeze_backbone, param_groups, staged training loop, evaluate
@@ -19,14 +18,12 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import v2
-
 GRADES = ["premium", "standard", "substandard", "reject"]                        # frozen order
 DEFECTS = ["mould", "skin_split", "insect_damage", "sugaring", "foreign_object"]  # frozen order
 IMG_SIZE = 160                       # classifier input (course uses 224; 160 keeps CPU epochs short)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 CONTRACT_VERSION = "transforms@v1(size=160,bilinear,imagenet-stats)"
-
 # =============================================================================
 # DATA: the preprocessing contract
 # =============================================================================
@@ -37,7 +34,6 @@ def eval_tf(size: int = IMG_SIZE):
         v2.ToDtype(torch.float32, scale=True),           # uint8 [0,255] -> float [0,1]  (before Normalize)
         v2.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
-
 
 def train_tf(size: int = IMG_SIZE, strength: float = 1.0):
     """Every transform models a REAL line variation (comment = justification)."""
@@ -53,7 +49,6 @@ def train_tf(size: int = IMG_SIZE, strength: float = 1.0):
         v2.RandomErasing(p=0.15, scale=(0.01, 0.05)),                  # partial occlusion by neighbouring fruit
     ])
 
-
 class DatesQCDataset(Dataset):
     """Split is assigned by SESSION in the manifest, never by frame (the leakage defence)."""
     def __init__(self, root, split, transform=None, manifest="manifest_v1.csv", convert_bgr=True):
@@ -61,7 +56,6 @@ class DatesQCDataset(Dataset):
         m = pd.read_csv(root / manifest)
         self.rows = m[m["split"] == split].reset_index(drop=True)
         self.root, self.transform, self.convert_bgr = root, transform, convert_bgr
-
     def __len__(self):
         return len(self.rows)
 
@@ -76,8 +70,6 @@ class DatesQCDataset(Dataset):
         if self.transform:
             t = self.transform(t)
         return t, GRADES.index(row["grade"])
-
-
 def dataset_stats(ds, n_max=400):
     """Per-channel mean/std in [0,1] over the first n_max images (raw, no normalisation)."""
     acc = np.zeros(3); acc2 = np.zeros(3); n = 0
@@ -87,8 +79,6 @@ def dataset_stats(ds, n_max=400):
         acc += x.mean(1).numpy(); acc2 += (x ** 2).mean(1).numpy(); n += 1
     mean = acc / n
     return mean.round(3), np.sqrt(acc2 / n - mean ** 2).round(3)
-
-
 def measure_throughput(ds, batch_size=32, num_workers=0, n_batches=8):
     dl = DataLoader(ds, batch_size=batch_size, num_workers=num_workers, shuffle=False)
     it = iter(dl); next(it)                                # warm-up batch
@@ -99,7 +89,6 @@ def measure_throughput(ds, batch_size=32, num_workers=0, n_batches=8):
         except StopIteration:
             break
     return round(n / (time.perf_counter() - t0), 1)
-
 # =============================================================================
 # MODELS: transfer learning + staged fine-tuning
 # =============================================================================
@@ -111,27 +100,19 @@ def build_model(pretrained=True, arch="resnet18"):
         model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
     model.fc = nn.Linear(model.fc.in_features, len(GRADES))    # fresh head, frozen class order
     return model
-
-
 def freeze_backbone(model):
     """Stage 1: only parameters named fc.* train. Freezing is nothing more than requires_grad flags."""
     for name, p in model.named_parameters():
         p.requires_grad = name.startswith("fc.")
-
-
 def param_groups(model, lr_backbone, lr_head):
     """Stage 2: one optimizer, two learning rates."""
     backbone = [p for n, p in model.named_parameters() if not n.startswith("fc.")]
     head = [p for n, p in model.named_parameters() if n.startswith("fc.")]
     return [{"params": backbone, "lr": lr_backbone}, {"params": head, "lr": lr_head}]
-
-
 def class_weights(ds):
     counts = ds.rows["grade"].value_counts().reindex(GRADES).fillna(1).values.astype(float)
     w = counts.sum() / (len(GRADES) * counts)
     return torch.tensor(w, dtype=torch.float32)
-
-
 def train_epoch(model, dl, opt, device, weights=None):
     model.train(); crit = nn.CrossEntropyLoss(weight=weights.to(device) if weights is not None else None)
     total, n = 0.0, 0
@@ -140,8 +121,6 @@ def train_epoch(model, dl, opt, device, weights=None):
         opt.zero_grad(); loss = crit(model(x), y); loss.backward(); opt.step()
         total += loss.item() * len(y); n += len(y)
     return total / n
-
-
 @torch.no_grad()
 def evaluate(model, dl, device):
     """Deterministic eval path: model.eval() inside, per-class recall + macro-F1 (never accuracy alone)."""
@@ -156,8 +135,6 @@ def evaluate(model, dl, device):
             "per_class_recall": dict(zip(GRADES, recall_score(y, p, average=None, labels=range(len(GRADES))).round(3).tolist())),
             "confusion": confusion_matrix(y, p, labels=range(len(GRADES))).tolist(),
             "y": y, "pred": p, "probs": pr}
-
-
 def staged_finetune(model, train_dl, val_dl, device, weights=None, stage1_epochs=2, stage2_epochs=4,
                     lr_head=1e-3, lr_backbone=1e-4, patience=2, uniform_lr=None, ckpt_path=None, log=print):
     """Head-only warm-up, then discriminative learning rates with early stopping on val macro-F1.
@@ -191,15 +168,12 @@ def staged_finetune(model, train_dl, val_dl, device, weights=None, stage1_epochs
     if best_state:
         model.load_state_dict(best_state)
     return pd.DataFrame(history), best
-
-
 def load_checkpoint(path, device="cpu"):
     ckpt = torch.load(path, map_location=device, weights_only=False)
     assert ckpt["classes"] == GRADES, "class order in checkpoint differs from GRADES: refuse to serve"
     sd = {k: (v.float() if v.is_floating_point() else v) for k, v in ckpt["state_dict"].items()}   # fp16-stored weights -> fp32
     model = build_model(pretrained=False); model.load_state_dict(sd); model.eval()
     return model, ckpt
-
 # =============================================================================
 # DETECT / SEG: converters with validation
 # =============================================================================
@@ -238,8 +212,6 @@ def manifest_to_yolo(root, out_dir, boxes_csv="annotations_boxes_raw.csv", manif
     yaml = f"path: {out.resolve()}\ntrain: images/train\nval: images/val\ntest: images/test\nnames:\n" + "".join(f"  {i}: {n}\n" for i, n in enumerate(DEFECTS))
     (out / "dates-det.yaml").write_text(yaml)
     return pd.DataFrame(bad)
-
-
 def polygons_to_yolo_seg(root, out_dir, polys_json="annotations_polygons.json", manifest="manifest_v1.csv", img_size=256):
     """Polygons (pixels) -> YOLO-seg txt (class x1 y1 x2 y2 ... normalised). Classes: fruit + 5 defects."""
     root, out = Path(root), Path(out_dir)
@@ -264,8 +236,6 @@ def polygons_to_yolo_seg(root, out_dir, polys_json="annotations_polygons.json", 
         (out / "labels" / split / f.replace(".jpg", ".txt")).write_text("\n".join(lines))
     (out / "dates-seg.yaml").write_text(f"path: {out.resolve()}\ntrain: images/train\nval: images/val\ntest: images/test\nnames:\n" + "".join(f"  {i}: {n}\n" for i, n in enumerate(names)))
     return degenerate
-
-
 def defect_area_report(result, defect_classes=("mould", "skin_split", "insect_damage", "sugaring")):
     """Per-fruit defect-area percentage from a YOLO-seg result, majority-overlap attribution."""
     if result.masks is None:
@@ -309,16 +279,12 @@ def audit_labels(model, ds, device="cpu", batch_size=64):
                         "pred": GRADES[int(pred[k])], "conf": round(float(conf[k]), 3), "loss": round(float(loss[k]), 4)})
         i += len(y)
     return pd.DataFrame(rec).sort_values("loss", ascending=False).reset_index(drop=True)
-
-
 def cohen_kappa(a, b, labels=GRADES):
     a, b = pd.Categorical(a, categories=labels), pd.Categorical(b, categories=labels)
     cm = pd.crosstab(a, b, dropna=False).reindex(index=labels, columns=labels, fill_value=0).values.astype(float)
     n = cm.sum(); po = np.trace(cm) / n
     pe = (cm.sum(0) * cm.sum(1)).sum() / n ** 2
     return float((po - pe) / (1 - pe)), pd.DataFrame(cm.astype(int), index=labels, columns=labels)
-
-
 @torch.no_grad()
 def score_pool(model, pool_dir, device="cpu", size=IMG_SIZE):
     """Uncertainty (entropy) of the classifier on unlabelled frames."""
@@ -331,8 +297,6 @@ def score_pool(model, pool_dir, device="cpu", size=IMG_SIZE):
         rows.append({"file": p.name, "session_id": p.name.split("_")[0], "entropy": round(ent, 4), "pred": GRADES[int(pr.argmax())],
                      "mean_intensity": round(float(img.mean()), 1)})
     return pd.DataFrame(rows).sort_values("entropy", ascending=False).reset_index(drop=True)
-
-
 def select_next_batch(scores, budget, per_session_cap=None):
     """Uncertainty sampling with a diversity cap per session (stops collapse onto one failure mode)."""
     chosen, counts = [], {}
@@ -341,12 +305,8 @@ def select_next_batch(scores, budget, per_session_cap=None):
         chosen.append(r["file"]); counts[r["session_id"]] = counts.get(r["session_id"], 0) + 1
         if len(chosen) >= budget: break
     return chosen
-
-
 def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
 def release_dataset(root, version, manifest_name, spec_version, changelog):
     """Immutable release: manifest with per-file hashes + release hash + changelog. v3 supersedes, never edits."""
     root = Path(root); rel = root / "releases" / version; rel.mkdir(parents=True, exist_ok=True)
@@ -357,15 +317,12 @@ def release_dataset(root, version, manifest_name, spec_version, changelog):
             "changelog": changelog}
     json.dump(info, open(rel / "RELEASE.json", "w"), indent=2)
     return info
-
-
 def verify_split_freeze(root, v_old, v_new):
     a = pd.read_csv(Path(root) / "releases" / v_old / "manifest.csv"); b = pd.read_csv(Path(root) / "releases" / v_new / "manifest.csv")
     old_test = a[a.split == "test"].set_index("file"); new = b.set_index("file")
     missing = [f for f in old_test.index if f not in new.index]
     moved = [f for f in old_test.index if f in new.index and new.loc[f, "split"] != "test"]
     return {"ok": not missing and not moved, "missing_from_new": missing, "moved_out_of_test": moved}
-
 # =============================================================================
 # EVAL: matching and AP from first principles
 # =============================================================================
@@ -379,8 +336,6 @@ def iou_matrix(a, b):
     inter = np.clip(x2 - x1, 0, None) * np.clip(y2 - y1, 0, None)
     area_a = (a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1]); area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
     return inter / (area_a[:, None] + area_b[None, :] - inter + 1e-9)
-
-
 def match_image(preds, gts, iou_thr=0.5):
     """Greedy matching in confidence order, same class only, each GT consumed once.
     preds: dict(boxes (P,4), cls (P,), conf (P,)); gts: dict(boxes (G,4), cls (G,)).
@@ -398,8 +353,6 @@ def match_image(preds, gts, iou_thr=0.5):
         if iou[p, best] >= iou_thr:
             tp[p], consumed[best], matched_gt[p] = True, True, best
     return tp, np.where(~consumed)[0], matched_gt, iou
-
-
 def average_precision(tp, conf, n_gt):
     """101-point interpolated AP (COCO convention)."""
     if n_gt == 0:
@@ -438,8 +391,6 @@ def evaluate_detections(pred_df, gt_df, classes=DEFECTS, iou_thr=0.5, conf_thr=0
         rec = float(pc["tp"].sum() / n_gt) if n_gt else float("nan")
         out.append({"class": cname, "n_gt": n_gt, "AP50": round(ap, 4), "recall_at_conf": round(rec, 4), "n_pred": len(pc), "fp": int((~pc["tp"]).sum()) if len(pc) else 0})
     return pd.DataFrame(out), P, M
-
-
 def error_taxonomy(P, M, gt_df, iou_thr=0.5):
     """Five buckets: miss, misclassification, localisation, duplicate, background. Returns error mass shares."""
     fp = P[~P["tp"]]
@@ -451,8 +402,6 @@ def error_taxonomy(P, M, gt_df, iou_thr=0.5):
         else: counts["background"] += 1
     total = max(sum(counts.values()), 1)
     return {k: round(v / total, 3) for k, v in counts.items()}, counts
-
-
 def slice_report(pred_df, gt_df, key, iou_thr=0.5, conf_thr=0.25, min_n=50):
     """Recall per slice (key: a function file -> slice name). Slices under min_n GT are flagged under-powered."""
     slices = sorted({key(f) for f in gt_df["file"]})
@@ -463,7 +412,6 @@ def slice_report(pred_df, gt_df, key, iou_thr=0.5, conf_thr=0.25, min_n=50):
         n = int(tab["n_gt"].sum()); rec = 1 - len(M) / max(n, 1)
         rows.append({"slice": s, "n_gt": n, "recall": round(rec, 3), "mean_AP50": round(float(tab["AP50"].mean()), 3), "powered": n >= min_n})
     return pd.DataFrame(rows)
-
 # =============================================================================
 # DEPLOY
 # =============================================================================
@@ -486,14 +434,10 @@ def export_onnx_with_parity(model, ckpt_path_out, ds, n=50, size=IMG_SIZE, eval_
         out = sess.run(None, {"image": x.numpy()})[0]
         max_diff = max(max_diff, float(np.abs(ref - out).max())); flips += int(ref.argmax() != out.argmax())
     return {"max_diff": max_diff, "flips": flips, "n": min(n, len(ds)), "parity_ok": max_diff < 1e-4 and flips == 0}
-
-
 def quantize_dynamic_int8(onnx_in, onnx_out):
     from onnxruntime.quantization import quantize_dynamic, QuantType
     quantize_dynamic(onnx_in, onnx_out, weight_type=QuantType.QInt8)
     return Path(onnx_out).stat().st_size / 1e6
-
-
 def preprocess_cv2(img_bgr, size=IMG_SIZE):
     """Production reimplementation of eval_tf() in OpenCV. Must be equivalence-tested against eval_tf()."""
     rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -501,8 +445,6 @@ def preprocess_cv2(img_bgr, size=IMG_SIZE):
     x = rgb.astype(np.float32) / 255.0
     x = (x - np.array(IMAGENET_MEAN, np.float32)) / np.array(IMAGENET_STD, np.float32)
     return x.transpose(2, 0, 1)[None]
-
-
 def benchmark_stages(sess, frames_bgr, input_name="image", n_runs=300, warmup=20, size=IMG_SIZE, postprocess=None):
     """Honest benchmark: warm-up discarded, p50/p95/p99 per stage over n_runs on real frames."""
     for _ in range(warmup):
@@ -521,16 +463,12 @@ def benchmark_stages(sess, frames_bgr, input_name="image", n_runs=300, warmup=20
     total = (np.array(stages["pre"]) + np.array(stages["infer"]) + np.array(stages["post"])) * 1000
     rows.append({"stage": "TOTAL", "p50_ms": round(np.percentile(total, 50), 2), "p95_ms": round(np.percentile(total, 95), 2), "p99_ms": round(np.percentile(total, 99), 2)})
     return pd.DataFrame(rows)
-
-
 # =============================================================================
 # DEPLOY (detector helpers): decode + NMS in code, static INT8 with calibration, ONNX predictions for the harness
 # =============================================================================
 def det_preprocess(bgr, size):
     x = cv2.resize(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), (size, size)).astype(np.float32) / 255.0
     return x.transpose(2, 0, 1)[None]
-
-
 def decode_and_nms(raw, conf_thr=0.25, iou_thr=0.45):
     """Ultralytics ONNX output (1, 4+nc, N) -> list of (cls, conf, xyxy). NMS in CODE so the operating point stays in config."""
     out = raw[0][0]
@@ -541,8 +479,6 @@ def decode_and_nms(raw, conf_thr=0.25, iou_thr=0.45):
     b = boxes[keep]; xyxy = np.stack([b[:, 0] - b[:, 2] / 2, b[:, 1] - b[:, 3] / 2, b[:, 0] + b[:, 2] / 2, b[:, 1] + b[:, 3] / 2], 1)
     idx = cv2.dnn.NMSBoxes(np.stack([xyxy[:, 0], xyxy[:, 1], xyxy[:, 2] - xyxy[:, 0], xyxy[:, 3] - xyxy[:, 1]], 1).tolist(), sc[keep].tolist(), conf_thr, iou_thr)
     return [(int(cls[keep][i]), float(sc[keep][i]), xyxy[i]) for i in np.array(idx).ravel()]
-
-
 def quantize_static_int8(onnx_in, onnx_out, calib_frames_bgr, size, input_name="images", keep_float_substring="model.23"):
     """Static INT8 (QDQ, per-channel) with a calibration set. The calibration frames must be REPRESENTATIVE
     (stratified by session / lighting), or the quantised model collapses on the slices it never saw.
@@ -551,7 +487,6 @@ def quantize_static_int8(onnx_in, onnx_out, calib_frames_bgr, size, input_name="
     from onnxruntime.quantization import quantize_static, CalibrationDataReader, QuantType, QuantFormat, CalibrationMethod
     from onnxruntime.quantization.shape_inference import quant_pre_process
     pre = str(onnx_out).replace(".onnx", "_pre.onnx"); quant_pre_process(str(onnx_in), pre)
-
     class Reader(CalibrationDataReader):
         def __init__(self): self.it = iter(calib_frames_bgr)
         def get_next(self):
@@ -563,8 +498,6 @@ def quantize_static_int8(onnx_in, onnx_out, calib_frames_bgr, size, input_name="
                     weight_type=QuantType.QInt8, activation_type=QuantType.QUInt8, calibrate_method=CalibrationMethod.MinMax)
     Path(pre).unlink(missing_ok=True)
     return Path(onnx_out).stat().st_size / 1e6
-
-
 def onnx_detect_predictions(sess, files, root, size, conf_thr=0.02, iou_thr=0.45, frame_size=256):
     """Run an exported detector over files and return the prediction table the Lab 6 harness consumes (pixel coords of the original frame)."""
     inp = sess.get_inputs()[0].name; rows = []
